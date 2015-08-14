@@ -1,18 +1,3 @@
-# Copyright (C) 2015 The PASTA Team
-#
-# This program is free software; you can redistribute it and/or
-# modify it under the terms of the GNU General Public License
-# version 2 as published by the Free Software Foundation
-#
-# This program is distributed in the hope that it will be useful,
-# but WITHOUT ANY WARRANTY; without even the implied warranty of
-# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-# GNU General Public License for more details.
-#
-# You should have received a copy of the GNU General Public License
-# along with this program; if not, write to the Free Software
-# Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
-
 #---------------------------------------------------------------------------------
 .SUFFIXES:
 #---------------------------------------------------------------------------------
@@ -175,11 +160,13 @@ endif
 $(BUILD): include/patches.h
 	@mkdir -p $@
 	@$(MAKE) --no-print-directory -C $(BUILD) -f $(CURDIR)/Makefile
+	@$(MAKE) --no-print-directory -C CakesROPSpider CODE_PATH=$(CODE_PATH)
 
 #---------------------------------------------------------------------------------
 clean:
 	@echo clean ...
 	@rm -fr $(BUILD) ../$(TARGET).elf ../$(TARGET).nds $(SOUNDBANK) patches.elf patches include/
+	@$(MAKE) --no-print-directory -C CakesROPSpider CODE_PATH=$(CODE_PATH) clean
 
 include/patches.h: patches
 	mkdir include
@@ -189,7 +176,7 @@ patches: patches.elf
 	$(OBJCOPY) -O binary $^ $@
 
 patches.elf: patches.S
-	$(CC) -DCODE_PATH=\"$(CODE_PATH)\" -nostartfiles -nostdlib -Ttext=0 patches.S -o $@
+	$(CC) -nostartfiles -nostdlib -Ttext=0 patches.S -o $@
 
 #---------------------------------------------------------------------------------
 else

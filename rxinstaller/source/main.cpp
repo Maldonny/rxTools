@@ -1,20 +1,3 @@
-/*
- * Copyright (C) 2015 The PASTA Team
- *
- * This program is free software; you can redistribute it and/or
- * modify it under the terms of the GNU General Public License
- * version 2 as published by the Free Software Foundation
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this program; if not, write to the Free Software
- * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
- */
-
 #include <nds.h>
 #include <stdio.h>
 #include <fat.h>
@@ -129,6 +112,9 @@ char * agets( char * str, int num, int stream ){
 //---------------------------------------------------------------------------------
 int main(int argc, char **argv) {
 //---------------------------------------------------------------------------------
+	static const char path[] = "YS:/" CODE_PATH;
+	int i;
+
 	videoSetMode(MODE_5_2D);                         //shamlessly ripped from the libnds examples :p
 	videoSetModeSub(MODE_0_2D);
 	vramSetBankA(VRAM_A_MAIN_BG);
@@ -195,7 +181,7 @@ int main(int argc, char **argv) {
 	}
 
 	int pressed,fwSelected=0,screenOffset=0;
-	// Default rxTools.dat + custom
+	// Default + custom
     int patch_count = patches.size() * 2;
 
 	showPatchList(patches, fwSelected);
@@ -281,10 +267,11 @@ int main(int argc, char **argv) {
 	}
 
     if (fwSelected < (int)patches.size()) {
-        for(int i=0;i< 32;i+=2){
-            *(workbuffer+0x11C+i)=(L"YS:/" CODE_PATH)[i/2];
-            *(workbuffer+0x11C+i+1)=0;
-        }
+        i = 0;
+        do {
+            *(workbuffer+0x11C+i*2)=path[i];
+            *(workbuffer+0x11C+i*2+1)=0;
+        } while (path[i++] != 0);
     } else {
         // Load filename from ropCustom.txt
         int csSelected=0;  //custom selected

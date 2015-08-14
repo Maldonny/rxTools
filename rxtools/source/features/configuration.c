@@ -26,10 +26,11 @@
 #include "console.h"
 #include "draw.h"
 #include "hid.h"
+#include "mpcore.h"
 #include "ncch.h"
 #include "crypto.h"
 #include "polarssl/aes.h"
-#include "cfw.h"
+#include "firm.h"
 #include "downgradeapp.h"
 #include "stdio.h"
 #include "menu.h"
@@ -37,20 +38,10 @@
 
 #define DATAFOLDER	"rxtools/data"
 #define KEYFILENAME	"slot0x25KeyX.bin"
-#define WORKBUF		(u8*)0x21000000
+#define WORKBUF		(uint8_t*)0x21000000
 #define NAT_SIZE	0xEBC00
 #define AGB_SIZE	0xD9C00
 #define TWL_SIZE	0x1A1C00
-#define PROGRESS_WIDTH	7
-#define PROGRESS_X	(SCREEN_WIDTH-PROGRESS_WIDTH*FONT_WIDTH)/2
-
-bool first_boot;
-char tmpstr[256] = {0};
-char str[100];
-char strl[100];
-char strr[100];
-File tempfile;
-UINT tmpu32;
 
 static char cfgLang[CFG_STR_MAX_LEN] = "en.json";
 
@@ -60,6 +51,7 @@ Cfg cfgs[] = {
 	[CFG_AGB] = { "AGB", CFG_TYPE_BOOLEAN, { .i = 0 } },
 	[CFG_3D] = { "3D", CFG_TYPE_BOOLEAN, { .i = 1 } },
 	[CFG_SILENT] = { "Silent", CFG_TYPE_BOOLEAN, { .i = 0 } },
+	[CFG_ABSYSN] = { "Autoboot-sysNAND", CFG_TYPE_BOOLEAN, { .i = 0 } },
 	[CFG_LANG] = { "Language", CFG_TYPE_STRING, { .s = cfgLang } }
 };
 
@@ -244,72 +236,62 @@ int readCfg()
 }
 
 int InstallData(char* drive){
-	static const FirmInfo native_info = { 0x66000, 0x84A00, 0x08006800, 0x35000, 0x31000, 0x1FF80000, 0x15B00, 0x16700, 0x08028000};
-	static const FirmInfo agb_info = { 0x8B800, 0x4CE00, 0x08006800, 0, 0, 0, 0xD600, 0xE200, 0x08020000};
-	static const FirmInfo twl_info = { 0x153600, 0x4D200, 0x08006800, 0, 0, 0, 0xD600, 0xE200, 0x08020000};
+	static const FirmInfo agb_info = { 0x8B800, 0x4CE00, 0x08006800, 0xD600, 0xE200, 0x08020000};
+	static const FirmInfo twl_info = { 0x153600, 0x4D200, 0x08006800, 0xD600, 0xE200, 0x08020000};
+	AppInfo appInfo;
 	FIL firmfile;
-	wchar_t progressbar[41] = {0,};
-	for(int i=0; i<PROGRESS_WIDTH; i++)
+	File fd;
+	unsigned int progressWidth, progressX;
+	wchar_t progressbar[8] = {0,};
+	wchar_t *progress = progressbar;
+	UINT br;
+	char path[64];
+	int i;
+
+	progressWidth = getMpInfo() == MPINFO_CTR ? 7 : 3;
+	progressX = (BOT_SCREEN_WIDTH - progressWidth * FONT_WIDTH) / 2;
+
+	for (i = 0; i < progressWidth; i++)
 		wcscat(progressbar, strings[STR_PROGRESS]);
-	wchar_t *progress = progressbar+0;
 	print(L"%ls", progressbar);
 	ConsolePrevLine();
 
 	//Create the workdir
-	sprintf(tmpstr, "%s:%s", drive, DATAFOLDER);
-	f_mkdir(tmpstr);
+	sprintf(path, "%s:%s", drive, DATAFOLDER);
+	f_mkdir(path);
 
 	//Read firmware data
-	if (f_open(&firmfile, "firmware.bin", FA_READ | FA_OPEN_EXISTING) != FR_OK) return CONF_NOFIRMBIN;
+	if (f_open(&firmfile, "rxtools/system/firmware.bin", FA_READ | FA_OPEN_EXISTING) != FR_OK) return CONF_NOFIRMBIN;
 	wcsncpy(progress, strings[STR_PROGRESS_OK], wcslen(strings[STR_PROGRESS_OK]));
 	progress += wcslen(strings[STR_PROGRESS_OK]);
-	DrawString(BOT_SCREEN, progressbar, PROGRESS_X, 50, ConsoleGetTextColor(), ConsoleGetBackgroundColor());
+	DrawString(BOT_SCREEN, progressbar, progressX, 50, ConsoleGetTextColor(), ConsoleGetBackgroundColor());
 
-	//Create patched native_firm
-	f_read(&firmfile, WORKBUF, NAT_SIZE, &tmpu32);
-	u8* n_firm = decryptFirmTitle(WORKBUF, NAT_SIZE, 0x00000002, 1);
-	if (applyPatch(n_firm, "/rxTools/system/patches/native_firm.elf", &native_info))
-		return CONF_ERRPATCH;
+	//Create decrypted native_firm
+	f_read(&firmfile, WORKBUF, NAT_SIZE, &br);
+	uint8_t* n_firm = decryptFirmTitle(WORKBUF, NAT_SIZE, 0x00000002, 1);
+	wcsncpy(progress, strings[STR_PROGRESS_OK], wcslen(strings[STR_PROGRESS_OK]));
+	progress += wcslen(strings[STR_PROGRESS_OK]);
+	DrawString(BOT_SCREEN, progressbar, progressX, 50, ConsoleGetTextColor(), ConsoleGetBackgroundColor());
 
-	u8 keyx[16] = {0};
-	if(GetSystemVersion() < 3){
-		if (!FileOpen(&tempfile, KEYFILENAME, 0))
-		{
-			f_close(&firmfile);
-			return CONF_CANTOPENFILE;
-		}
-		FileRead(&tempfile, &keyx[0], 16, 0);
-		FileClose(&tempfile);
-	}
-	wcsncpy(progress, strings[STR_PROGRESS_OK], wcslen(strings[STR_PROGRESS_OK]));
-	progress += wcslen(strings[STR_PROGRESS_OK]);
-	DrawString(BOT_SCREEN, progressbar, PROGRESS_X, 50, ConsoleGetTextColor(), ConsoleGetBackgroundColor());
-	for(int i = 0; i < NAT_SIZE; i+=0x4){
-		if(!strcmp((char*)n_firm + i, "InsertKeyXHere!") && keyx[0] != 0){
-			memcpy(n_firm + i, keyx, 16);
-		}
-		if(*((unsigned int*)(n_firm + i)) == 0xAAAABBBB){
-			*((unsigned int*)(n_firm + i)) = (checkEmuNAND() / 0x200) - 1;
-		}
-	}
-	wcsncpy(progress, strings[STR_PROGRESS_OK], wcslen(strings[STR_PROGRESS_OK]));
-	progress += wcslen(strings[STR_PROGRESS_OK]);
-	DrawString(BOT_SCREEN, progressbar, PROGRESS_X, 50, ConsoleGetTextColor(), ConsoleGetBackgroundColor());
-	sprintf(tmpstr, "%s:%s/0004013800000002.bin", drive, DATAFOLDER);
-	if(FileOpen(&tempfile, tmpstr, 1)){
-		FileWrite(&tempfile, n_firm, NAT_SIZE, 0);
-		FileClose(&tempfile);
+	getFirmPath(path, getMpInfo() == MPINFO_KTR ?
+		TID_KTR_NATIVE_FIRM : TID_CTR_NATIVE_FIRM);
+	if(FileOpen(&fd, path, 1)){
+		FileWrite(&fd, n_firm, NAT_SIZE, 0);
+		FileClose(&fd);
 	}else {
 		f_close(&firmfile);
 		return CONF_ERRNFIRM;
 	}
 	wcsncpy(progress, strings[STR_PROGRESS_OK], wcslen(strings[STR_PROGRESS_OK]));
 	progress += wcslen(strings[STR_PROGRESS_OK]);
-	DrawString(BOT_SCREEN, progressbar, PROGRESS_X, 50, ConsoleGetTextColor(), ConsoleGetBackgroundColor());
+	DrawString(BOT_SCREEN, progressbar, progressX, 50, ConsoleGetTextColor(), ConsoleGetBackgroundColor());
+
+	if (getMpInfo() != MPINFO_CTR)
+		goto end;
 
 	//Create AGB patched firmware
-	f_read(&firmfile, WORKBUF, AGB_SIZE, &tmpu32);
-	u8* a_firm = decryptFirmTitle(WORKBUF, AGB_SIZE, 0x00000202, 1);
+	f_read(&firmfile, WORKBUF, AGB_SIZE, &br);
+	uint8_t* a_firm = decryptFirmTitle(WORKBUF, AGB_SIZE, 0x00000202, 1);
 	if (!a_firm && checkEmuNAND())
 	{
 		/* Try to get the Title Key from the EmuNAND */
@@ -318,34 +300,36 @@ int InstallData(char* drive){
 			/* If we cannot decrypt it from firmware.bin because of titlekey messed up,
 			it probably means that AGB has been modified in some way. */
 			//So we read it from his installed ncch...
-			FindApp(0x00040138, 0x00000202, 1);
-			char* path = getContentAppPath();
-			if (!FileOpen(&tempfile, path, 0) && checkEmuNAND())
+			appInfo.drive = 1;
+			appInfo.tidLo = 0x00040138;
+			appInfo.tidHi = 0x00000202;
+			FindApp(&appInfo);
+			if (!FileOpen(&fd, appInfo.content, 0) && checkEmuNAND())
 			{
 				/* Try with EmuNAND */
-				FindApp(0x00040138, 0x00000202, 2);
-				path = getContentAppPath();
-				if (!FileOpen(&tempfile, path, 0))
+				appInfo.drive = 2;
+				FindApp(&appInfo);
+				if (!FileOpen(&fd, appInfo.content, 0))
 				{
 					f_close(&firmfile);
 					return CONF_ERRNFIRM;
 				}
 			}
 
-			FileRead(&tempfile, WORKBUF, AGB_SIZE, 0);
-			FileClose(&tempfile);
+			FileRead(&fd, WORKBUF, AGB_SIZE, 0);
+			FileClose(&fd);
 			a_firm = decryptFirmTitleNcch(WORKBUF, AGB_SIZE);
 		}
 	}
 
 	if (a_firm) {
-		if (applyPatch(a_firm, "/rxTools/system/patches/agb_firm.elf", &agb_info))
+		if (applyPatch(a_firm, "/rxTools/system/patches/ctr/agb_firm.elf", &agb_info))
 			return CONF_ERRPATCH;
 
-		sprintf(tmpstr, "%s:%s/0004013800000202.bin", drive, DATAFOLDER);
-		if(FileOpen(&tempfile, tmpstr, 1)){
-			FileWrite(&tempfile, a_firm, AGB_SIZE, 0);
-			FileClose(&tempfile);
+		getFirmPath(path, TID_CTR_AGB_FIRM);
+		if(FileOpen(&fd, path, 1)){
+			FileWrite(&fd, a_firm, AGB_SIZE, 0);
+			FileClose(&fd);
 		}else {
 			f_close(&firmfile);
 			return CONF_ERRNFIRM;
@@ -357,19 +341,19 @@ int InstallData(char* drive){
 		progress += wcslen(strings[STR_PROGRESS_FAIL]); //If we get here, then we'll play without AGB, lol
 	}
 
-	DrawString(BOT_SCREEN, progressbar, PROGRESS_X, 50, ConsoleGetTextColor(), ConsoleGetBackgroundColor());
+	DrawString(BOT_SCREEN, progressbar, progressX, 50, ConsoleGetTextColor(), ConsoleGetBackgroundColor());
 
 	//Create TWL patched firmware
-	f_read(&firmfile, WORKBUF, TWL_SIZE, &tmpu32);
-	u8* t_firm = decryptFirmTitle(WORKBUF, TWL_SIZE, 0x00000102, 1);
+	f_read(&firmfile, WORKBUF, TWL_SIZE, &br);
+	uint8_t* t_firm = decryptFirmTitle(WORKBUF, TWL_SIZE, 0x00000102, 1);
 	if(t_firm){
-		if (applyPatch(t_firm, "/rxTools/system/patches/twl_firm.elf", &twl_info))
+		if (applyPatch(t_firm, "/rxTools/system/patches/ctr/twl_firm.elf", &twl_info))
 			return CONF_ERRPATCH;
 
-		sprintf(tmpstr, "%s:%s/0004013800000102.bin", drive, DATAFOLDER);
-		if(FileOpen(&tempfile, tmpstr, 1)){
-			FileWrite(&tempfile, t_firm, TWL_SIZE, 0);
-			FileClose(&tempfile);
+		getFirmPath(path, TID_CTR_TWL_FIRM);
+		if(FileOpen(&fd, path, 1)){
+			FileWrite(&fd, t_firm, TWL_SIZE, 0);
+			FileClose(&fd);
 			//FileCopy("0004013800000102.bin", tmpstr);
 		}else {
 			f_close(&firmfile);
@@ -381,70 +365,88 @@ int InstallData(char* drive){
 		wcsncpy(progress, strings[STR_PROGRESS_FAIL], wcslen(strings[STR_PROGRESS_FAIL]));
 		progress += wcslen(strings[STR_PROGRESS_FAIL]);
 	}
-	DrawString(BOT_SCREEN, progressbar, PROGRESS_X, 50, ConsoleGetTextColor(), ConsoleGetBackgroundColor());
+	DrawString(BOT_SCREEN, progressbar, progressX, 50, ConsoleGetTextColor(), ConsoleGetBackgroundColor());
 
-	sprintf(tmpstr, "%s:%s/data.bin", drive, DATAFOLDER);
-	if(FileOpen(&tempfile, tmpstr, 1)){
-		FileWrite(&tempfile, __DATE__, 12, 0);
-		FileWrite(&tempfile, __TIME__, 9, 12);
-		FileClose(&tempfile);
+	sprintf(path, "%s:%s/data.bin", drive, DATAFOLDER);
+	if(FileOpen(&fd, path, 1)){
+		FileWrite(&fd, __DATE__, 12, 0);
+		FileWrite(&fd, __TIME__, 9, 12);
+		FileClose(&fd);
 	}else {
 		f_close(&firmfile);
 		return CONF_CANTOPENFILE;
 	}
 	wcsncpy(progress, strings[STR_PROGRESS_OK], wcslen(strings[STR_PROGRESS_OK]));
 	progress += wcslen(strings[STR_PROGRESS_OK]);
-	DrawString(BOT_SCREEN, progressbar, PROGRESS_X, 50, ConsoleGetTextColor(), ConsoleGetBackgroundColor());
+	DrawString(BOT_SCREEN, progressbar, progressX, 50, ConsoleGetTextColor(), ConsoleGetBackgroundColor());
 
+end:
 	f_close(&firmfile);
 	return 0;
 }
 
 int CheckInstallationData(){
 	File file;
-	char str[32];
-	if(!FileOpen(&file, "rxTools/data/0004013800000002.bin", 0)) return -1;
-	FileClose(&file);
-	if(!FileOpen(&file, "rxTools/data/0004013800000202.bin", 0)) return -2;
-	FileClose(&file);
-	if(!FileOpen(&file, "rxTools/data/0004013800000102.bin", 0)) return -3;
-	FileClose(&file);
-	if(!FileOpen(&file, "rxTools/data/data.bin", 0)) return -4;
-	FileRead(&file, str, 32, 0);
-	FileClose(&file);
-	if(memcmp(str, __DATE__, 11)) return -5;
-	if(memcmp(&str[12], __TIME__, 8)) return -5;
-	return 0;
+	char str[64];
+
+	switch (getMpInfo()) {
+		case MPINFO_CTR:
+			getFirmPath(str, TID_CTR_NATIVE_FIRM);
+			if(!FileOpen(&file, str, 0)) return -1;
+			FileClose(&file);
+
+			getFirmPath(str, TID_CTR_TWL_FIRM);
+			if(!FileOpen(&file, str, 0)) return -2;
+			FileClose(&file);
+
+			getFirmPath(str, TID_CTR_AGB_FIRM);
+			if(!FileOpen(&file, str, 0)) return -3;
+			FileClose(&file);
+
+			if(!FileOpen(&file, "rxTools/data/data.bin", 0)) return -4;
+			FileRead(&file, str, 32, 0);
+			FileClose(&file);
+			if(memcmp(str, __DATE__, 11)) return -5;
+			if(memcmp(&str[12], __TIME__, 8)) return -5;
+
+			return 0;
+
+		case MPINFO_KTR:
+			getFirmPath(str, TID_KTR_NATIVE_FIRM);
+			if(!FileOpen(&file, str, 0)) return -1;
+			FileClose(&file);
+
+		default:
+			return 0;
+	}
 }
 
 void InstallConfigData(){
-	if(CheckInstallationData() == 0)
-	{
-		first_boot = false;
-		return;
-	}
+	char path[64], pathL[64], pathR[64];
 
-	first_boot = true;
-	trySetLangFromTheme();
+	if(CheckInstallationData() == 0)
+		return;
+
+	trySetLangFromTheme(0);
 	writeCfg();
 
-	sprintf(str, "/rxTools/Theme/%u/cfg0TOP.bin", cfgs[CFG_THEME].val.i);
-	DrawTopSplash(str, str, str);
-	sprintf(str, "/rxTools/Theme/%u/cfg0.bin", cfgs[CFG_THEME].val.i);
-	DrawBottomSplash(str);
+	sprintf(path, "/rxTools/Theme/%u/cfg0TOP.bin", cfgs[CFG_THEME].val.i);
+	DrawTopSplash(path, path, path);
+	sprintf(path, "/rxTools/Theme/%u/cfg0.bin", cfgs[CFG_THEME].val.i);
+	DrawBottomSplash(path);
 
 	int res = InstallData("0");	//SD Card
-	sprintf(str, "/rxTools/Theme/%u/cfg1%c.bin", cfgs[CFG_THEME].val.i, res == 0 ? 'O' : 'E');
-	DrawBottomSplash(str);
-	sprintf(str, "/rxTools/Theme/%u/TOP.bin", cfgs[CFG_THEME].val.i);
-	sprintf(strl, "/rxTools/Theme/%u/TOPL.bin", cfgs[CFG_THEME].val.i);
-	sprintf(strr, "/rxTools/Theme/%u/TOPR.bin", cfgs[CFG_THEME].val.i);
-	DrawTopSplash(str, strl, strr);
+	sprintf(path, "/rxTools/Theme/%u/cfg1%c.bin", cfgs[CFG_THEME].val.i, res == 0 ? 'O' : 'E');
+	DrawBottomSplash(path);
+	sprintf(path, "/rxTools/Theme/%u/TOP.bin", cfgs[CFG_THEME].val.i);
+	sprintf(pathL, "/rxTools/Theme/%u/TOPL.bin", cfgs[CFG_THEME].val.i);
+	sprintf(pathR, "/rxTools/Theme/%u/TOPR.bin", cfgs[CFG_THEME].val.i);
+	DrawTopSplash(path, pathL, pathR);
 
 	InputWait();
 }
 
-void trySetLangFromTheme(){
+void trySetLangFromTheme(int onswitch) {
 	File MyFile;
 	char str[100];
 	unsigned int i;
@@ -459,8 +461,10 @@ void trySetLangFromTheme(){
 		for (i = 0; i + 1 < CFG_STR_MAX_LEN
 			&& cfgs[CFG_LANG].val.s[i] != '\r'
 			&& cfgs[CFG_LANG].val.s[i] != '\n'; i++);
-		str[i] = 0;
+		cfgs[CFG_LANG].val.s[i] = 0;
 
+		if(onswitch)
+			preloadStringsOnSwitch();
 		loadStrings();
 	}
 	FileClose(&MyFile);
