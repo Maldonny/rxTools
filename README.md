@@ -14,7 +14,7 @@ I do not support piracy in any way, all the data and information in my software 
 ## Current functionality
 ### General
 - Support for Web Browser (SPIDER) entrypoint for Old3DS (ver 4.1-9.2)
-- Support for System Settings (MSET) entrypoint for Old3DS (ver 4.1-4.5)
+- Support for System Settings (MSET) entrypoint for Old3DS (ver 4.1-4.5 and 6.0-6.4)
 - Support for System Settings (MSET) downgrading for Old3DS
 - Support for Ninjhax (Not Stable)
 - Hacking tools collection
@@ -84,11 +84,11 @@ License, v. 2.0.
 
 See CakeHax/LICENSE.txt for the details.
 
-###rxinstaller
-rxinstaller is based on CakesROP, licensed by zoogie, mid-kid, bilis,
-and Reisyukaku under the BSD 2-clause license.
+###CakesROP
+CakesROP is licensed by zoogie, mid-kid, bilis, and Reisyukaku
+under the BSD 2-clause license.
 
-See rxinstaller/LICENSE for the details.
+See CakesROP/LICENSE for the details.
 
 ###PolarSSL
 Copyright (C) 2006-2010, Brainspark B.V.
